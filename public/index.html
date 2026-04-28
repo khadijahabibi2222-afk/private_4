@@ -997,23 +997,52 @@ function renderPage(n){var map={dashboard:renderDashboard,income:renderIncome,ex
 
 function renderDashboard(){
   var ob=DB.openingBalance||{afn:0};
-  var totalInc=DB.income.reduce(function(a,b){return a+b.afn;},0)+ob.afn;
-  var totalExp=DB.expenses.reduce(function(a,b){return a+b.afn;},0);
-  var balance=totalInc-totalExp;
-  var totalRec=DB.debts.filter(function(d){return d.type==='طلب'&&!d.paid;}).reduce(function(a,b){return a+b.afn;},0);
-  var totalPay=DB.debts.filter(function(d){return d.type==='قرض'&&!d.paid;}).reduce(function(a,b){return a+b.afn;},0);
-  var netWorth=balance+totalRec-totalPay;
+  // ── core figures ──
+  var capital        = ob.afn;                                               // 1) سرمایه اولیه
+  var grossInc       = DB.income.reduce(function(a,b){return a+b.afn;},0);  // raw transaction income
+  var totalExp       = DB.expenses.reduce(function(a,b){return a+b.afn;},0);
+  var netInc         = grossInc - totalExp;                                  // عایدات خالص (no OB)
+  var capitalNetInc  = capital + netInc;                                     // 2) سرمایه + عایدات خالص
+  var capitalGrossInc= capital + grossInc;                                   // 3) سرمایه + عایدات کل
+  var totalRec = DB.debts.filter(function(d){return d.type==='طلب'&&!d.paid;}).reduce(function(a,b){return a+b.afn;},0);
+  var totalPay = DB.debts.filter(function(d){return d.type==='قرض'&&!d.paid;}).reduce(function(a,b){return a+b.afn;},0);
+  var netWorth = capitalNetInc + totalRec - totalPay;                        // پول کاملاً خالص
+
+  // ── 4-panel metric row ──
+  function mc(cls,icon,label,mainVal,secVal,sub){
+    return '<div class="mc '+cls+'" style="border-top:3px solid '+(cls==='g'?'var(--green)':cls==='r'?'var(--red)':cls==='b'?'var(--blue)':'var(--amber)')+'">'
+      +'<div class="mc-label">'+icon+' '+label+'</div>'
+      +'<div class="mc-val '+cls+'">'+mainVal+'</div>'
+      +'<div class="mc-val2">'+secVal+'</div>'
+      +'<div class="mc-sub">'+sub+'</div></div>';
+  }
   document.getElementById('dashMetrics').innerHTML=
-    '<div class="mc g"><div class="mc-label">مجموع آمد</div><div class="mc-val g">'+fmtP(totalInc)+'</div><div class="mc-val2">'+fmtS(totalInc)+'</div><div class="mc-sub">'+DB.income.length+' تراکنش + سرمایه قبلی</div></div>'+
-    '<div class="mc r"><div class="mc-label">مجموع مصارف</div><div class="mc-val r">'+fmtP(totalExp)+'</div><div class="mc-val2">'+fmtS(totalExp)+'</div><div class="mc-sub">'+DB.expenses.length+' تراکنش</div></div>'+
-    '<div class="mc '+(balance>=0?'g':'r')+'"><div class="mc-label">مانده / تفاوت</div><div class="mc-val '+(balance>=0?'g':'r')+'">'+fmtP(balance)+'</div><div class="mc-val2">'+fmtS(balance)+'</div><div class="mc-sub">'+(balance>=0?'مازاد':'کسر')+'</div></div>'+
-    '<div class="mc b"><div class="mc-label">نرخ ارز فعلی</div><div class="mc-val b" style="font-size:15px">۱$ = '+CFG.rate+' ؋</div><div class="mc-sub">'+(CFG.rateLabel||'بازار')+'</div></div>';
+    mc('b','💼','سرمایه اولیه',fmtP(capital),fmtS(capital),capital>0?'موجودی قبل از ثبت‌ها':'هنوز ثبت نشده')+
+    mc('g','📊','سرمایه + عایدات خالص',fmtP(capitalNetInc),fmtS(capitalNetInc),'پس از کسر مصارف ('+DB.income.length+' آمد / '+DB.expenses.length+' مصرف)')+
+    mc(capitalGrossInc>=0?'g':'r','📈','سرمایه + عایدات کل',fmtP(capitalGrossInc),fmtS(capitalGrossInc),'بدون کسر مصارف — مجموع خام')+
+    mc('a','🤝','طلبات خالص',fmtP(totalRec-totalPay),fmtS(totalRec-totalPay),'طلب '+fmtP(totalRec)+' | قرض '+fmtP(totalPay));
+
+  // ── net worth hero card ──
   document.getElementById('netWorthCard').innerHTML=
-    '<div class="nw-title">📊 خلاصه ثروت و موقعیت مالی</div>'+
+    '<div class="nw-title">💎 ثروت خالص واقعی — بعد از کسر تمام قروض و لحاظ طلبات</div>'+
     '<div class="nw-row">'+
-    '<div class="nw-item"><div class="nw-label">پول خالص (بعد از قروض)</div><div class="nw-val">'+fmtP(netWorth)+'</div><div class="nw-val2">'+fmtS(netWorth)+'</div></div>'+
-    '<div class="nw-item"><div class="nw-label">جمع طلبات فعال</div><div class="nw-val" style="color:#a5f3d0">'+fmtP(totalRec)+'</div><div class="nw-val2">'+fmtS(totalRec)+'</div></div>'+
-    '<div class="nw-item"><div class="nw-label">جمع قروض فعال</div><div class="nw-val" style="color:#fca5a5">'+fmtP(totalPay)+'</div><div class="nw-val2">'+fmtS(totalPay)+'</div></div>'+
+    '<div class="nw-item">'+
+      '<div class="nw-label">پول خالص کامل</div>'+
+      '<div class="nw-val" style="font-size:36px;font-weight:900;letter-spacing:-1px">'+fmtP(netWorth)+'</div>'+
+      '<div class="nw-val2" style="font-size:18px;font-weight:700">'+fmtS(netWorth)+'</div>'+
+    '</div>'+
+    '<div class="nw-item">'+
+      '<div class="nw-label">طلبات فعال (دریافتنی)</div>'+
+      '<div class="nw-val" style="color:#a5f3d0;font-size:22px">'+fmtP(totalRec)+'</div>'+
+      '<div class="nw-val2">'+fmtS(totalRec)+'</div>'+
+      '<div style="font-size:11px;color:rgba(255,255,255,.45);margin-top:6px">اگر وصول شود به ثروت خالص اضافه می‌شود</div>'+
+    '</div>'+
+    '<div class="nw-item">'+
+      '<div class="nw-label">قروض فعال (پرداختنی)</div>'+
+      '<div class="nw-val" style="color:#fca5a5;font-size:22px">'+fmtP(totalPay)+'</div>'+
+      '<div class="nw-val2">'+fmtS(totalPay)+'</div>'+
+      '<div style="font-size:11px;color:rgba(255,255,255,.45);margin-top:6px">از ثروت خالص کسر شده است</div>'+
+    '</div>'+
     '</div>';
   var months=last6();
   var div=CFG.primaryCurrency==='USD'?(CFG.rate||88):1;
@@ -1104,21 +1133,73 @@ function renderDebts(){
 }
 
 function renderForecast(){
-  var avgInc=monthlyAvg(DB.income); var avgExp=monthlyAvg(DB.expenses); var avgSave=avgInc-avgExp;
   var ob=DB.openingBalance||{afn:0};
-  var curBal=DB.income.reduce(function(a,b){return a+b.afn;},0)+ob.afn-DB.expenses.reduce(function(a,b){return a+b.afn;},0);
+  var capital   = ob.afn;
+  var grossInc  = DB.income.reduce(function(a,b){return a+b.afn;},0);
+  var totalExp  = DB.expenses.reduce(function(a,b){return a+b.afn;},0);
+  var netInc    = grossInc - totalExp;
+  var totalRec  = DB.debts.filter(function(d){return d.type==='طلب'&&!d.paid;}).reduce(function(a,b){return a+b.afn;},0);
+  var totalPay  = DB.debts.filter(function(d){return d.type==='قرض'&&!d.paid;}).reduce(function(a,b){return a+b.afn;},0);
+  var netWorth  = capital + netInc + totalRec - totalPay;  // base for projection
+
+  var avgInc  = monthlyAvg(DB.income);
+  var avgExp  = monthlyAvg(DB.expenses);
+  var avgSave = avgInc - avgExp;   // monthly net
+
+  // ── top summary metrics ──
   document.getElementById('fMetrics').innerHTML=
     '<div class="mc g"><div class="mc-label">میانگین آمد ماهانه</div><div class="mc-val g">'+fmtP(Math.round(avgInc))+'</div><div class="mc-val2">'+fmtS(Math.round(avgInc))+'</div></div>'+
     '<div class="mc r"><div class="mc-label">میانگین مصرف ماهانه</div><div class="mc-val r">'+fmtP(Math.round(avgExp))+'</div><div class="mc-val2">'+fmtS(Math.round(avgExp))+'</div></div>'+
-    '<div class="mc '+(avgSave>=0?'g':'r')+'"><div class="mc-label">میانگین پس انداز</div><div class="mc-val '+(avgSave>=0?'g':'r')+'">'+fmtP(Math.round(avgSave))+'</div><div class="mc-val2">'+fmtS(Math.round(avgSave))+'</div></div>';
-  var periods=[{l:'۳ ماه آینده',m:3},{l:'۶ ماه آینده',m:6},{l:'یک سال آینده',m:12}];
+    '<div class="mc '+(avgSave>=0?'g':'r')+'"><div class="mc-label">پس‌انداز خالص ماهانه</div><div class="mc-val '+(avgSave>=0?'g':'r')+'">'+fmtP(Math.round(avgSave))+'</div><div class="mc-val2">'+fmtS(Math.round(avgSave))+'</div></div>'+
+    '<div class="mc b"><div class="mc-label">پایه پیش‌بینی (ثروت خالص)</div><div class="mc-val b" style="font-size:18px">'+fmtP(Math.round(netWorth))+'</div><div class="mc-val2">'+fmtS(Math.round(netWorth))+'</div></div>';
+
+  // ── forecast cards: 3 periods × rich data ──
+  var periods=[
+    {l:'۳ ماه آینده', m:3,  icon:'📅'},
+    {l:'۶ ماه آینده', m:6,  icon:'📆'},
+    {l:'یک سال آینده',m:12, icon:'🗓'}
+  ];
+
   document.getElementById('fCards').innerHTML=periods.map(function(p){
-    var proj=curBal+(avgSave*p.m);
-    return '<div class="fc-card"><div class="fc-label">'+p.l+'</div><div class="fc-main" style="color:'+(proj>=0?'#059669':'#dc2626')+'">'+fmtP(Math.round(proj))+'</div><div class="fc-sec">'+fmtS(Math.round(proj))+'</div><div class="fc-detail">آمد: '+fmtP(Math.round(avgInc*p.m))+'<br>مصرف: '+fmtP(Math.round(avgExp*p.m))+'<br>پس انداز: '+fmtP(Math.round(avgSave*p.m))+'</div></div>';
+    var projNet   = netWorth + avgSave * p.m;           // پول خالص پیش‌بینی‌شده
+    var projInc   = grossInc + avgInc  * p.m;           // جمع آمد
+    var projExp   = totalExp + avgExp  * p.m;           // جمع مصارف
+    var projSave  = avgSave  * p.m;                     // پس‌انداز این دوره
+    var posClr    = projNet>=0 ? '#059669':'#dc2626';
+    var saveClr   = projSave>=0? '#2563eb':'#dc2626';
+    return '<div class="fc-card" style="border-top:3px solid '+(projNet>=0?'#059669':'#dc2626')+'">'
+      +'<div class="fc-label">'+p.icon+' '+p.l+'</div>'
+      // main: projected net worth
+      +'<div style="margin-bottom:3px;font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.4px">ثروت خالص پیش‌بینی‌شده</div>'
+      +'<div class="fc-main" style="color:'+posClr+'">'+fmtP(Math.round(projNet))+'</div>'
+      +'<div class="fc-sec">'+fmtS(Math.round(projNet))+'</div>'
+      // breakdown rows
+      +'<div style="border-top:1px solid var(--border);margin:10px 0 8px"></div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">'
+        +'<div style="background:var(--green3);border:1px solid var(--green2);border-radius:7px;padding:7px;text-align:center">'
+          +'<div style="color:var(--text3);font-size:10px;font-weight:600;margin-bottom:3px;text-transform:uppercase">آمد تجمعی</div>'
+          +'<div style="font-weight:700;color:var(--green)">'+fmtP(Math.round(projInc))+'</div>'
+        +'</div>'
+        +'<div style="background:var(--red3);border:1px solid var(--red2);border-radius:7px;padding:7px;text-align:center">'
+          +'<div style="color:var(--text3);font-size:10px;font-weight:600;margin-bottom:3px;text-transform:uppercase">مصارف تجمعی</div>'
+          +'<div style="font-weight:700;color:var(--red)">'+fmtP(Math.round(projExp))+'</div>'
+        +'</div>'
+        +'<div style="grid-column:1/-1;background:var(--blue3);border:1px solid var(--blue2);border-radius:7px;padding:7px;text-align:center">'
+          +'<div style="color:var(--text3);font-size:10px;font-weight:600;margin-bottom:3px;text-transform:uppercase">پس‌انداز خالص این دوره</div>'
+          +'<div style="font-size:14px;font-weight:800;color:'+saveClr+'">'+fmtP(Math.round(projSave))+'  <span style="font-size:11px;font-weight:500;color:var(--text3)">'+fmtS(Math.round(projSave))+'</span></div>'
+        +'</div>'
+      +'</div>'
+      +'</div>';
   }).join('');
-  document.getElementById('fNote').innerHTML=!DB.income.length
-    ?'<div class="empty">برای فعال شدن پیش بینی، چند تراکنش ثبت کنید.</div>'
-    :'<div style="font-size:14px;color:var(--text2);line-height:2.2;padding:2px 0">پیش بینی بر اساس <b>'+DB.income.length+'</b> آمد و <b>'+DB.expenses.length+'</b> مصرف. نرخ فعلی: <b>۱$ = '+CFG.rate.toFixed(2)+' ؋</b> ('+( CFG.rateLabel||'بازار')+').</div>';
+
+  document.getElementById('fNote').innerHTML= !DB.income.length
+    ? '<div class="empty">برای فعال شدن پیش بینی، چند تراکنش آمد ثبت کنید.</div>'
+    : '<div style="font-size:13px;color:var(--text2);line-height:2.1;padding:2px 0">'
+        +'⚙ <b>روش محاسبه:</b> پایه پیش‌بینی از <b>ثروت خالص فعلی</b> شروع می‌شود '
+        +'(سرمایه + عایدات خالص + طلبات − قروض = <b>'+fmtP(Math.round(netWorth))+'</b>). '
+        +'هر ماه میانگین پس‌انداز خالص (<b>'+fmtP(Math.round(avgSave))+'</b>) اضافه می‌شود. '
+        +'نرخ ارز: <b>۱$ = '+parseFloat(CFG.rate).toFixed(2)+' ؋</b> ('+(CFG.rateLabel||'بازار')+').'
+      +'</div>';
 }
 
 function exportData(){
