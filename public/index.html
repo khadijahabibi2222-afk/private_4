@@ -631,7 +631,6 @@ select option{background:#fff}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 // ════════ STATE ════════
-var AUTH_TOKEN = null;
 var CURRENT_USER = '';
 var SAVE_TIMER = null;
 var CFG_SAVE_TIMER = null;
@@ -649,52 +648,41 @@ var PAGES = {
   reports:{title:'گزارشات',addLabel:null,modal:null}
 };
 
-// ════════ API HELPERS ════════
-function apiHeaders() {
-  return {'Content-Type':'application/json','Authorization':'Bearer '+AUTH_TOKEN};
+// ════════ AUTH — pure localStorage ════════
+function getUsers() {
+  try { return JSON.parse(localStorage.getItem('fin_users') || '{}'); } catch(e) { return {}; }
 }
-async function apiFetch(url, opts) {
-  var res = await fetch(url, Object.assign({headers: apiHeaders()}, opts));
-  var data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'خطای سرور');
-  return data;
+function defaultUsers() {
+  // seed defaults if never saved
+  var u = getUsers();
+  if (!u['admin']) { u['admin'] = '1234'; localStorage.setItem('fin_users', JSON.stringify(u)); }
+  return u;
 }
 
-// ════════ AUTH ════════
-async function doLogin() {
+function doLogin() {
   var user = document.getElementById('loginUser').value.trim();
   var pass = document.getElementById('loginPass').value;
-  if (!user || !pass) { document.getElementById('loginErr').textContent = '⚠ لطفاً نام کاربری و رمز را وارد کنید'; return; }
-  var btn = document.getElementById('loginBtn');
-  btn.disabled = true; btn.textContent = '...در حال ورود';
-  try {
-    var res = await fetch('/api/auth/login', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({username: user, password: pass})
-    });
-    var data = await res.json();
-    if (res.ok) {
-      AUTH_TOKEN = data.token;
-      CURRENT_USER = data.username;
-      document.getElementById('loginScreen').style.display = 'none';
-      document.getElementById('loggedUserLabel').textContent = '👤 ' + data.username;
-      document.getElementById('loginErr').textContent = '';
-      await load();
-      renderAll();
-      updateRatePreview();
-    } else {
-      document.getElementById('loginErr').textContent = '⚠ ' + (data.error || 'نام کاربری یا رمز اشتباه است');
-    }
-  } catch(e) {
-    document.getElementById('loginErr').textContent = '⚠ خطا در ارتباط با سرور';
-  } finally {
-    btn.disabled = false; btn.textContent = 'ورود به سیستم';
+  var err  = document.getElementById('loginErr');
+  if (!user || !pass) { err.textContent = '⚠ لطفاً نام کاربری و رمز را وارد کنید'; return; }
+  var users = defaultUsers();
+  if (users[user] && users[user] === pass) {
+    CURRENT_USER = user;
+    sessionStorage.setItem('fin_session', user);
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('loggedUserLabel').textContent = '👤 ' + user;
+    err.textContent = '';
+    load(); renderAll(); updateRatePreview();
+  } else {
+    err.textContent = '⚠ نام کاربری یا رمز اشتباه است';
+    document.getElementById('loginPass').value = '';
+    document.getElementById('loginPass').focus();
   }
 }
 
 function doLogout() {
   if (!confirm('آیا می‌خواهید از حساب خارج شوید؟')) return;
-  AUTH_TOKEN = null; CURRENT_USER = '';
+  CURRENT_USER = '';
+  sessionStorage.removeItem('fin_session');
   DB = {income:[],expenses:[],goals:[],debts:[],openingBalance:{afn:0,title:'موجودی اولیه',cur:'AFN',raw:0}};
   CFG = {primaryCurrency:'USD',rate:88,rateLabel:'بازار'};
   document.getElementById('loginScreen').style.display = 'flex';
@@ -703,41 +691,51 @@ function doLogout() {
   document.getElementById('loginErr').textContent = '';
 }
 
-function checkAuth() { /* login screen is shown by default; token lives in memory */ }
-
-async function saveUserSettings() {
-  var newUser = document.getElementById('um-username').value.trim();
-  var newPass = document.getElementById('um-password').value;
-  if (!newUser && !newPass) { toast('⚠ هیچ تغییری وارد نشده'); return; }
-  try {
-    var data = await apiFetch('/api/auth/change', {
-      method:'POST',
-      body: JSON.stringify({newUsername: newUser||undefined, newPassword: newPass||undefined})
-    });
-    AUTH_TOKEN = data.token;
-    CURRENT_USER = data.username;
-    document.getElementById('loggedUserLabel').textContent = '👤 ' + data.username;
-    if (newPass) {
-      toast('✓ رمز عبور تغییر کرد — لطفاً دوباره وارد شوید');
-      setTimeout(function(){doLogout();}, 1500);
-    } else {
-      toast('✓ نام کاربری تغییر کرد');
-    }
-    closeAll();
-  } catch(e) {
-    toast('⚠ ' + e.message);
+function checkAuth() {
+  var s = sessionStorage.getItem('fin_session');
+  if (s) {
+    CURRENT_USER = s;
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('loggedUserLabel').textContent = '👤 ' + s;
+    load(); renderAll(); updateRatePreview();
   }
 }
 
-// ════════ DATA — SERVER-SIDE STORAGE ════════
+function saveUserSettings() {
+  var newUser = document.getElementById('um-username').value.trim();
+  var newPass = document.getElementById('um-password').value;
+  if (!newUser && !newPass) { toast('⚠ هیچ تغییری وارد نشده'); return; }
+  var users = getUsers();
+  var oldUser = CURRENT_USER;
+  if (newUser && newUser !== oldUser) {
+    users[newUser] = users[oldUser] || '1234';
+    if (newPass) users[newUser] = newPass;
+    delete users[oldUser];
+    localStorage.setItem('fin_users', JSON.stringify(users));
+    // migrate data key
+    var oldData = localStorage.getItem('fin_db_' + oldUser);
+    if (oldData) { localStorage.setItem('fin_db_' + newUser, oldData); localStorage.removeItem('fin_db_' + oldUser); }
+    CURRENT_USER = newUser;
+    sessionStorage.setItem('fin_session', newUser);
+    document.getElementById('loggedUserLabel').textContent = '👤 ' + newUser;
+    toast('✓ نام کاربری تغییر کرد');
+  } else if (newPass) {
+    users[oldUser] = newPass;
+    localStorage.setItem('fin_users', JSON.stringify(users));
+    toast('✓ رمز عبور تغییر کرد');
+  }
+  closeAll();
+}
+
+// ════════ DATA — localStorage ════════
+function dbKey()  { return 'fin_db_'  + (CURRENT_USER || 'admin'); }
+function cfgKey() { return 'fin_cfg_' + (CURRENT_USER || 'admin'); }
+
 function save() {
   clearTimeout(SAVE_TIMER);
-  SAVE_TIMER = setTimeout(async function() {
-    if (!AUTH_TOKEN) return;
-    try {
-      await fetch('/api/data', {method:'PUT', headers:apiHeaders(), body:JSON.stringify(DB)});
-    } catch(e) { toast('⚠ خطا در ذخیره سازی'); }
-  }, 400);
+  SAVE_TIMER = setTimeout(function() {
+    try { localStorage.setItem(dbKey(), JSON.stringify(DB)); } catch(e) { toast('⚠ خطا در ذخیره سازی'); }
+  }, 300);
 }
 
 function saveCfg() {
@@ -748,38 +746,30 @@ function saveCfg() {
   document.getElementById('cfg-rate').value = CFG.rate;
   updateRatePreview(); renderAll();
   clearTimeout(CFG_SAVE_TIMER);
-  CFG_SAVE_TIMER = setTimeout(async function() {
-    if (!AUTH_TOKEN) return;
-    try {
-      await fetch('/api/config', {method:'PUT', headers:apiHeaders(), body:JSON.stringify(CFG)});
-    } catch(e) { toast('⚠ خطا در ذخیره تنظیمات'); }
-  }, 400);
+  CFG_SAVE_TIMER = setTimeout(function() {
+    try { localStorage.setItem(cfgKey(), JSON.stringify(CFG)); } catch(e) {}
+  }, 300);
 }
 
-async function load() {
-  if (!AUTH_TOKEN) return;
+function load() {
   try {
-    var [dataRes, cfgRes] = await Promise.all([
-      fetch('/api/data',   {headers: apiHeaders()}),
-      fetch('/api/config', {headers: apiHeaders()})
-    ]);
-    if (dataRes.ok) {
-      var d = await dataRes.json();
+    var raw = localStorage.getItem(dbKey());
+    if (raw) {
+      var d = JSON.parse(raw);
       DB = Object.assign({}, DB, d);
       if (!DB.openingBalance) DB.openingBalance = {afn:0,title:'موجودی اولیه',cur:'AFN',raw:0};
     }
-    if (cfgRes.ok) {
-      CFG = await cfgRes.json();
-    }
-    document.getElementById('cfg-primary').value = CFG.primaryCurrency;
-    document.getElementById('cfg-rate').value = CFG.rate;
-    document.getElementById('cfg-usd-to-afn').value = CFG.rate;
-    document.getElementById('cfg-afn-to-usd').value = (1/CFG.rate).toFixed(6);
-    document.getElementById('cfg-rateLabel').value = CFG.rateLabel || 'بازار';
-    updateRatePreview();
-  } catch(e) {
-    toast('⚠ خطا در بارگذاری داده ها');
-  }
+  } catch(e) {}
+  try {
+    var cfg = localStorage.getItem(cfgKey());
+    if (cfg) CFG = JSON.parse(cfg);
+  } catch(e) {}
+  document.getElementById('cfg-primary').value = CFG.primaryCurrency;
+  document.getElementById('cfg-rate').value = CFG.rate;
+  document.getElementById('cfg-usd-to-afn').value = CFG.rate;
+  document.getElementById('cfg-afn-to-usd').value = (1/CFG.rate).toFixed(6);
+  document.getElementById('cfg-rateLabel').value = CFG.rateLabel || 'بازار';
+  updateRatePreview();
 }
 
 // ════════ CURRENCY ════════
@@ -811,9 +801,7 @@ function onRateUsdAfn(val){
     CFG.rate=r; document.getElementById('cfg-rate').value=r;
     updateRatePreview(); renderAll();
     clearTimeout(CFG_SAVE_TIMER);
-    CFG_SAVE_TIMER=setTimeout(function(){
-      if(AUTH_TOKEN) fetch('/api/config',{method:'PUT',headers:apiHeaders(),body:JSON.stringify(CFG)}).catch(function(){});
-    },600);
+    CFG_SAVE_TIMER=setTimeout(function(){ try{localStorage.setItem(cfgKey(),JSON.stringify(CFG));}catch(e){} },400);
   }
 }
 function onRateAfnUsd(val){
@@ -824,9 +812,7 @@ function onRateAfnUsd(val){
     CFG.rate=usdAfn; document.getElementById('cfg-rate').value=usdAfn;
     updateRatePreview(); renderAll();
     clearTimeout(CFG_SAVE_TIMER);
-    CFG_SAVE_TIMER=setTimeout(function(){
-      if(AUTH_TOKEN) fetch('/api/config',{method:'PUT',headers:apiHeaders(),body:JSON.stringify(CFG)}).catch(function(){});
-    },600);
+    CFG_SAVE_TIMER=setTimeout(function(){ try{localStorage.setItem(cfgKey(),JSON.stringify(CFG));}catch(e){} },400);
   }
 }
 
@@ -1436,6 +1422,8 @@ function importData(ev){
 }
 
 document.getElementById('todayDate').textContent=new Date().toLocaleDateString('fa-AF',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+defaultUsers(); // seed admin/1234 if first run
+checkAuth();    // auto-login from sessionStorage if tab still open
 </script>
 </body>
 </html>
